@@ -3,10 +3,11 @@ import numpy as np
 import pandas as pd
 
 from sklearn.datasets import load_iris, load_wine, load_breast_cancer
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score, classification_report
 
 import torch
@@ -250,5 +251,84 @@ def train_pytorch_mlp(
         "test_accuracy": float(accuracy),
         "final_loss": float(loss.item())
     }
+def tune_hyperparameters(dataset_name: str, model_name: str) -> str:
+    """Tune model hyperparameters using GridSearchCV."""
 
+    name = dataset_name.lower().strip()
+    model = model_name.lower().strip()
+
+    if name not in DATASETS:
+        return json.dumps({
+            "error": f"Unknown dataset '{name}'. Options: {list(DATASETS.keys())}"
+        })
+
+    if model not in ["svc", "decision_tree"]:
+        return json.dumps({
+            "error": "Unsupported model. Options: ['svc', 'decision_tree']"
+        })
+
+    data = DATASETS[name]()
+
+    X = data.data
+    y = data.target
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        random_state=42,
+        stratify=y
+    )
+
+    if model == "svc":
+        estimator = SVC()
+
+        param_grid = {
+            "C": [0.1, 1, 10],
+            "kernel": ["linear", "rbf"],
+            "gamma": ["scale", "auto"]
+        }
+
+    else:
+        estimator = DecisionTreeClassifier(
+            random_state=42
+        )
+
+        param_grid = {
+            "max_depth": [None, 3, 5, 10],
+            "min_samples_split": [2, 5, 10],
+            "criterion": ["gini", "entropy"]
+        }
+
+    grid_search = GridSearchCV(
+        estimator=estimator,
+        param_grid=param_grid,
+        cv=5,
+        scoring="accuracy",
+        n_jobs=-1
+    )
+
+    grid_search.fit(X_train, y_train)
+
+    best_model = grid_search.best_estimator_
+
+    test_accuracy = best_model.score(
+        X_test,
+        y_test
+    )
+
+    result = {
+        "dataset": name,
+        "model": model,
+        "method": "GridSearchCV",
+        "cv_folds": 5,
+        "best_parameters": grid_search.best_params_,
+        "best_cv_accuracy": float(grid_search.best_score_),
+        "test_accuracy": float(test_accuracy),
+        "number_of_parameter_combinations": len(
+            grid_search.cv_results_["params"]
+        )
+    }
+
+    return json.dumps(result, indent=2)
     return json.dumps(result, indent=2)
