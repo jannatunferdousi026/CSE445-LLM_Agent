@@ -386,3 +386,119 @@ def analyze_features(dataset_name: str) -> str:
     }
 
     return json.dumps(result, indent=2)
+def train_advanced_pytorch_classifier(
+    dataset_name: str,
+    epochs: int = 80
+) -> str:
+    """Advanced PyTorch classifier with BatchNorm, Dropout and LR Scheduler."""
+
+    name = dataset_name.lower().strip()
+
+    if name not in DATASETS:
+        return json.dumps({
+            "error": f"Unknown dataset '{name}'. Options: {list(DATASETS.keys())}"
+        })
+
+    data = DATASETS[name]()
+
+    X = data.data.astype(np.float32)
+    y = data.target.astype(np.int64)
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        random_state=42,
+        stratify=y
+    )
+
+    X_train = torch.tensor(X_train)
+    X_test = torch.tensor(X_test)
+    y_train = torch.tensor(y_train)
+    y_test = torch.tensor(y_test)
+
+    class AdvancedMLP(nn.Module):
+
+        def __init__(self, input_dim, num_classes):
+            super().__init__()
+
+            self.network = nn.Sequential(
+                nn.Linear(input_dim, 64),
+                nn.BatchNorm1d(64),
+                nn.ReLU(),
+                nn.Dropout(0.3),
+
+                nn.Linear(64, 32),
+                nn.BatchNorm1d(32),
+                nn.ReLU(),
+                nn.Dropout(0.2),
+
+                nn.Linear(32, num_classes)
+            )
+
+        def forward(self, x):
+            return self.network(x)
+
+    model = AdvancedMLP(
+        X.shape[1],
+        len(np.unique(y))
+    )
+
+    criterion = nn.CrossEntropyLoss()
+
+    optimizer = optim.Adam(
+        model.parameters(),
+        lr=0.01
+    )
+
+    scheduler = optim.lr_scheduler.StepLR(
+        optimizer,
+        step_size=25,
+        gamma=0.5
+    )
+
+    model.train()
+
+    final_loss = 0
+
+    for _ in range(epochs):
+
+        optimizer.zero_grad()
+
+        outputs = model(X_train)
+
+        loss = criterion(outputs, y_train)
+
+        loss.backward()
+
+        optimizer.step()
+
+        scheduler.step()
+
+        final_loss = loss.item()
+
+    model.eval()
+
+    with torch.no_grad():
+
+        predictions = model(X_test).argmax(dim=1)
+
+        accuracy = (
+            predictions.eq(y_test)
+            .float()
+            .mean()
+            .item()
+        )
+
+    result = {
+        "dataset": name,
+        "model": "advanced_pytorch_classifier",
+        "epochs": epochs,
+        "architecture": "64 → BatchNorm → Dropout → 32 → BatchNorm → Dropout",
+        "optimizer": "Adam",
+        "scheduler": "StepLR",
+        "test_accuracy": accuracy,
+        "final_loss": final_loss
+    }
+
+    return json.dumps(result, indent=2)
