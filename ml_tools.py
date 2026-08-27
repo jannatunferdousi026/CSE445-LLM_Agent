@@ -8,6 +8,9 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
+from sklearn.decomposition import PCA
+from sklearn.feature_selection import SequentialFeatureSelector
+from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score, classification_report
 
 import torch
@@ -331,4 +334,55 @@ def tune_hyperparameters(dataset_name: str, model_name: str) -> str:
     }
 
     return json.dumps(result, indent=2)
+def analyze_features(dataset_name: str) -> str:
+    """Apply PCA and Sequential Feature Selection to a dataset."""
+
+    name = dataset_name.lower().strip()
+
+    if name not in DATASETS:
+        return json.dumps({
+            "error": f"Unknown dataset '{name}'. Options: {list(DATASETS.keys())}"
+        })
+
+    data = DATASETS[name]()
+
+    X = data.data
+    y = data.target
+
+    n_components = min(2, X.shape[1])
+
+    pca = PCA(n_components=n_components)
+    X_pca = pca.fit_transform(X)
+
+    estimator = LogisticRegression(max_iter=1000)
+
+    n_features_to_select = max(1, min(2, X.shape[1]))
+
+    selector = SequentialFeatureSelector(
+        estimator,
+        n_features_to_select=n_features_to_select,
+        direction="forward",
+        scoring="accuracy",
+        cv=5
+    )
+
+    selector.fit(X, y)
+
+    selected_features = [
+        data.feature_names[i]
+        for i, selected in enumerate(selector.get_support())
+        if selected
+    ]
+
+    result = {
+        "dataset": name,
+        "original_features": int(X.shape[1]),
+        "pca_components": n_components,
+        "explained_variance_ratio": [
+            float(x) for x in pca.explained_variance_ratio_
+        ],
+        "selected_features": selected_features,
+        "number_of_selected_features": len(selected_features)
+    }
+
     return json.dumps(result, indent=2)
