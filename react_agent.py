@@ -1,11 +1,12 @@
-import json
 import re
 import requests
-
+import json
 from ml_tools import (
     load_dataset_summary,
     train_sklearn_model,
     train_pytorch_mlp,
+    analyze_features,
+    train_advanced_pytorch_classifier,
 )
 
 
@@ -17,8 +18,9 @@ TOOLS = {
     "load_dataset_summary": load_dataset_summary,
     "train_sklearn_model": train_sklearn_model,
     "train_pytorch_mlp": train_pytorch_mlp,
+    "analyze_features": analyze_features,
+    "train_advanced_pytorch_classifier": train_advanced_pytorch_classifier,
 }
-
 
 # ============================================================
 # OLLAMA CONFIGURATION
@@ -244,7 +246,35 @@ def execute_tool(action: str, action_input: str):
                 )
 
             return str(result)
+        if action == "analyze_features":
 
+            dataset_name = action_input.strip()
+
+            result = TOOLS[action](dataset_name)
+
+            if isinstance(result, dict):
+                return json.dumps(
+                    result,
+                    ensure_ascii=False,
+                    indent=2
+                )
+
+            return str(result)
+
+        if action == "train_advanced_pytorch_classifier":
+
+            dataset_name = action_input.strip()
+
+            result = TOOLS[action](dataset_name)
+
+            if isinstance(result, dict):
+                return json.dumps(
+                    result,
+                    ensure_ascii=False,
+                    indent=2
+                )
+
+            return str(result)
         return "ERROR: Invalid tool."
 
     except Exception as e:
@@ -259,7 +289,8 @@ def execute_tool(action: str, action_input: str):
 def react_agent(question: str, max_steps: int = 6):
 
     history = ""
-
+    executed_actions = set()
+    tool_results = {}
     for step in range(1, max_steps + 1):
 
         print(f"\n--- Step {step} ---")
@@ -282,7 +313,13 @@ Available tools:
 
 3. train_pytorch_mlp
    Input: dataset name
+4. analyze_features
+   Input: dataset name
+   Performs PCA and Sequential Feature Selection.
 
+5. train_advanced_pytorch_classifier
+   Input: dataset name
+   Uses BatchNorm, Dropout, Adam optimizer, and StepLR scheduler.
 Rules:
 
 - Use ONLY the tools listed above.
@@ -291,9 +328,16 @@ Rules:
 - Execute only ONE action at a time.
 - Do NOT write the Observation yourself.
 - Wait for the real tool observation.
-- If the observation is enough to answer the user, give a Final Answer.
-- Do not repeat a tool call if the previous observation already contains the required information.
-
+- Choose the tool that directly matches the user's request.
+- If the user asks for PCA or feature selection, use analyze_features.
+- If the user asks for an advanced PyTorch classifier, use train_advanced_pytorch_classifier.
+- If the user asks only for a dataset summary, use load_dataset_summary.
+- If the user asks to train a decision tree or random forest, use train_sklearn_model.
+- If the user asks to train a standard PyTorch MLP, use train_pytorch_mlp.
+- If a requested tool has already produced the required result, do NOT call it again.
+- Do NOT call unrelated tools.
+- Do NOT repeat the same action with the same input.
+- Once all parts of the user's request are completed, give a Final Answer immediately.
 For an action, use EXACTLY:
 
 Action: tool_name
@@ -363,7 +407,17 @@ Final Answer: answer
 
         action = parsed["action"]
         action_input = parsed["action_input"]
+        action_key = (action, action_input)
 
+        if action_key in executed_actions:
+            history += f"""
+
+The tool call '{action}' with input '{action_input}' was already executed.
+Do NOT execute it again.
+Use the existing observation and give a Final Answer.
+"""
+            return tool_results[action_key]
+        executed_actions.add(action_key)
         print(f"\nExecuting tool: {action}")
         print(f"Tool input: {action_input}")
 
@@ -371,6 +425,13 @@ Final Answer: answer
             action,
             action_input
         )
+        tool_results[action_key] = observation
+
+        if action in {
+            "analyze_features",
+            "train_advanced_pytorch_classifier"
+        }:
+            return observation
 
         print(f"\nObservation: {observation}")
 
