@@ -331,6 +331,83 @@ def react_agent(question: str, max_steps: int = 6):
     tool_results = {}
     relevant_memory = retrieve_memory(question)
 
+    # Deterministic multi-step planning for explicit compound requests.
+    q_lower = question.lower()
+
+    if "analyze" in q_lower and "feature" in q_lower:
+        import re as _re
+
+        dataset_match = _re.search(
+            r"\b(iris|wine|breast_cancer)\b",
+            q_lower
+        )
+
+        if dataset_match:
+            dataset = dataset_match.group(1)
+
+            if "summary" in q_lower:
+                print("\n--- Step 1 ---")
+                print("Action: load_dataset_summary")
+                print(f"Action Input: {dataset}")
+                print("\nExecuting tool: load_dataset_summary")
+                print(f"Tool input: {dataset}")
+
+                summary = execute_tool(
+                    "load_dataset_summary",
+                    dataset
+                )
+
+                print(f"\nObservation: {summary}")
+
+                print("\n--- Step 2 ---")
+                print("Action: analyze_features")
+                print(f"Action Input: {dataset}")
+                print("\nExecuting tool: analyze_features")
+                print(f"Tool input: {dataset}")
+
+                features = execute_tool(
+                    "analyze_features",
+                    dataset
+                )
+
+                print(f"\nObservation: {features}")
+
+                answer_prompt = f"""
+Give a concise final answer to this user question:
+
+{question}
+
+Dataset summary:
+{summary}
+
+Feature analysis:
+{features}
+
+Return ONLY:
+Final Answer: your answer
+"""
+
+                final_response = call_llm(answer_prompt).strip()
+                parsed_answer = parse_response(final_response)
+
+                if parsed_answer["type"] == "final":
+                    answer = parsed_answer["answer"]
+                else:
+                    answer = (
+                        f"Dataset summary: {summary}\n"
+                        f"Feature analysis: {features}"
+                    )
+
+                MEMORY.append({
+                    "question": question,
+                    "answer": answer
+                })
+
+                if len(MEMORY) > 5:
+                    MEMORY.pop(0)
+
+                return answer
+
     memory_reference = any(
         phrase in question.lower()
         for phrase in [
@@ -378,6 +455,11 @@ Give only the answer to the user's question.
 
         print(f"\n--- Step {step} ---")
 
+        completed_actions = "\n".join(
+            f"- {a[0]}({a[1]})"
+            for a in executed_actions
+        ) or "None"
+
         prompt = f"""
 You are a ReAct-style machine learning agent.
 
@@ -417,7 +499,10 @@ Rules:
 - If the user asks only for a dataset summary, use load_dataset_summary.
 - If the user asks to train a decision tree or random forest, use train_sklearn_model.
 - If the user asks to train a standard PyTorch MLP, use train_pytorch_mlp.
-- If a requested tool has already produced the required result, do NOT call it again.
+- If the user asks to both summarize a dataset AND analyze its features, first use load_dataset_summary, then use analyze_features.
+- If the user asks to both train a model AND analyze features, first complete the model training, then use analyze_features.
+- A tool listed under "Completed tool calls" has already been executed successfully. NEVER call that same tool/input again.
+- After a tool succeeds, inspect the user's original request and choose the next unfinished requested operation.
 - Do NOT call unrelated tools.
 - Do NOT repeat the same action with the same input.
 - Once all parts of the user's request are completed, give a Final Answer immediately.
@@ -442,7 +527,10 @@ If the persistent memory already contains the information needed to answer the u
 Do NOT call a tool when the answer is already available in persistent memory.
 Use tools only when the required information is not available in memory.
 
-Previous interaction:
+Completed tool calls:
+{completed_actions}
+
+Completed tool calls and observations:
 {history}
 
 
@@ -511,13 +599,51 @@ Final Answer: answer
         action_key = (action, action_input)
 
         if action_key in executed_actions:
+            observation = tool_results[action_key]
+
             history += f"""
 
 The tool call '{action}' with input '{action_input}' was already executed.
+
+Existing observation:
+{observation}
+
 Do NOT execute it again.
-Use the existing observation and give a Final Answer.
+Use the existing observations to give a Final Answer.
 """
-            return tool_results[action_key]
+
+            final_prompt = f"""
+Give a concise Final Answer to the user's original question.
+
+User question:
+{question}
+
+Completed observations:
+{history}
+
+Do not call any tools.
+Do not repeat any tool.
+Return ONLY:
+Final Answer: your answer
+"""
+
+            final_response = call_llm(final_prompt).strip()
+            parsed_final = parse_response(final_response)
+
+            if parsed_final["type"] == "final":
+                answer = parsed_final["answer"]
+
+                MEMORY.append({
+                    "question": question,
+                    "answer": answer
+                })
+
+                if len(MEMORY) > 5:
+                    MEMORY.pop(0)
+
+                return answer
+
+            return observation
         executed_actions.add(action_key)
         print(f"\nExecuting tool: {action}")
         print(f"Tool input: {action_input}")
@@ -552,20 +678,6 @@ Self-correction required:
             """
             continue
 
-        if action in {
-            "load_dataset_summary",
-            "analyze_features",
-            "train_advanced_pytorch_classifier"
-        }:
-            MEMORY.append({
-                "question": question,
-                "answer": observation
-            })
-
-            if len(MEMORY) > 5:
-                MEMORY.pop(0)
-
-            return observation
         print(f"\nObservation: {observation}")
 
         history += f"""

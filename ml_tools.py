@@ -6,6 +6,8 @@ from sklearn.datasets import load_iris, load_wine, load_breast_cancer
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.decomposition import PCA
@@ -85,9 +87,12 @@ def train_sklearn_model(
         )
 
     elif model_type == "logistic_regression":
-        clf = LogisticRegression(
-            max_iter=1000,
-            random_state=42
+        clf = make_pipeline(
+            StandardScaler(),
+            LogisticRegression(
+                max_iter=2000,
+                random_state=42
+            )
         )
 
     elif model_type == "random_forest":
