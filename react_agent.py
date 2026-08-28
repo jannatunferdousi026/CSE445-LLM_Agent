@@ -195,10 +195,23 @@ def execute_tool(action: str, action_input: str):
             result = TOOLS[action](dataset_name)
 
             if isinstance(result, dict):
+
+                if "error" in result:
+                    return f"ERROR: {result['error']}"
+
                 return json.dumps(
                     result,
                     ensure_ascii=False
                 )
+
+            try:
+                parsed_result = json.loads(result)
+
+                if isinstance(parsed_result, dict) and "error" in parsed_result:
+                    return f"ERROR: {parsed_result['error']}"
+
+            except (TypeError, json.JSONDecodeError):
+                pass
 
             return str(result)
 
@@ -426,13 +439,37 @@ Use the existing observation and give a Final Answer.
             action_input
         )
         tool_results[action_key] = observation
+        if observation.startswith("ERROR:"):
+            history += f"""
+
+The previous tool call failed.
+
+Tool:
+{action}
+
+Input:
+{action_input}
+
+Error:
+{observation}
+
+Self-correction required:
+- Analyze why the tool call failed.
+- Choose a valid tool and valid input that directly answers the original question.
+- Do not repeat the exact failed tool call.
+- Do not call unrelated tools.
+- Do not perform extra analysis that the user did not request.
+- If the original request cannot be completed with the available tools, give a Final Answer explaining the problem.
+- Continue solving the user's original question.
+            """
+            continue
 
         if action in {
+            "load_dataset_summary",
             "analyze_features",
             "train_advanced_pytorch_classifier"
         }:
             return observation
-
         print(f"\nObservation: {observation}")
 
         history += f"""
