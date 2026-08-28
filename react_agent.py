@@ -23,6 +23,12 @@ TOOLS = {
 }
 
 # ============================================================
+# CONVERSATION MEMORY
+# ============================================================
+
+MEMORY = []
+
+# ============================================================
 # OLLAMA CONFIGURATION
 # ============================================================
 
@@ -299,11 +305,75 @@ def execute_tool(action: str, action_input: str):
 # REACT AGENT
 # ============================================================
 
+def retrieve_memory(question: str):
+    question_words = set(
+        re.findall(r"\b\w+\b", question.lower())
+    )
+
+    relevant = []
+
+    for item in MEMORY:
+        memory_words = set(
+            re.findall(r"\b\w+\b", item["question"].lower())
+        )
+
+        if question_words & memory_words:
+            relevant.append(item)
+
+    return relevant[-3:]
+
 def react_agent(question: str, max_steps: int = 6):
+
+    global MEMORY
 
     history = ""
     executed_actions = set()
     tool_results = {}
+    relevant_memory = retrieve_memory(question)
+
+    memory_reference = any(
+        phrase in question.lower()
+        for phrase in [
+            "previous interaction",
+            "previous answer",
+            "previous conversation",
+            "earlier interaction",
+            "earlier answer",
+            "prior interaction",
+            "prior answer",
+            "last interaction",
+            "you said",
+            "we discussed"
+        ]
+    )
+
+    if relevant_memory and memory_reference:
+        memory_prompt = f"""
+Answer the user's question using ONLY the persistent memory below.
+
+User question:
+{question}
+
+Persistent memory:
+{relevant_memory}
+
+Do not use any tools.
+Do not invent information.
+Give only the answer to the user's question.
+"""
+
+        memory_answer = call_llm(memory_prompt).strip()
+
+        MEMORY.append({
+            "question": question,
+            "answer": memory_answer
+        })
+
+        if len(MEMORY) > 5:
+            MEMORY.pop(0)
+
+        return memory_answer
+
     for step in range(1, max_steps + 1):
 
         print(f"\n--- Step {step} ---")
@@ -365,8 +435,16 @@ For the final response, use EXACTLY:
 
 Final Answer: your answer
 
+Persistent memory:
+{relevant_memory}
+
+If the persistent memory already contains the information needed to answer the user's question, give a Final Answer directly.
+Do NOT call a tool when the answer is already available in persistent memory.
+Use tools only when the required information is not available in memory.
+
 Previous interaction:
 {history}
+
 
 Now continue solving the user's question.
 
@@ -390,7 +468,17 @@ Output ONLY ONE action OR ONE final answer.
 
         if parsed["type"] == "final":
 
-            return parsed["answer"]
+            answer = parsed["answer"]
+
+            MEMORY.append({
+                "question": question,
+                "answer": answer
+            })
+
+            if len(MEMORY) > 5:
+                MEMORY.pop(0)
+
+            return answer
 
         if parsed["type"] == "error":
 
@@ -469,6 +557,14 @@ Self-correction required:
             "analyze_features",
             "train_advanced_pytorch_classifier"
         }:
+            MEMORY.append({
+                "question": question,
+                "answer": observation
+            })
+
+            if len(MEMORY) > 5:
+                MEMORY.pop(0)
+
             return observation
         print(f"\nObservation: {observation}")
 
